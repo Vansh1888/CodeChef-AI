@@ -20,14 +20,14 @@ import {
   Send,
   User
 } from "lucide-react";
-import { 
-  askChef, 
-  scanFridge, 
-  runAgentTeam, 
-  searchSavedRecipes, 
+import {
+  askChefStream,
+  scanFridge,
+  runAgentTeam,
+  searchSavedRecipes,
   saveRecipe,
   FridgeAnalysisResult,
-  AgentRecipeResult, 
+  AgentRecipeResult,
   SearchResultItem,
 } from "../lib/api";
 
@@ -98,28 +98,41 @@ export default function Home() {
 
   const handleAskChef = async () => {
     if (!askPrompt.trim() || loadingAsk) return;
-    
+
     const userMessage = askPrompt.trim();
     const updatedHistory: ChatMessage[] = [
       ...chatHistory,
       { role: "user", content: userMessage }
     ];
+    const assistantIndex = updatedHistory.length;
 
-    setChatHistory(updatedHistory);
+    setChatHistory([...updatedHistory, { role: "assistant", content: "" }]);
     setAskPrompt("");
     setLoadingAsk(true);
 
     try {
-      const chefReply = await askChef(userMessage);
-      setChatHistory([
-        ...updatedHistory,
-        { role: "assistant", content: chefReply }
-      ]);
-    } catch (err: any) {
-      setChatHistory([
-        ...updatedHistory,
-        { role: "assistant", content: "Mamma Mia! Chef Mario encountered a slight glitch. Please try asking again!" }
-      ]);
+      let accumulated = "";
+      await askChefStream(userMessage, updatedHistory.slice(0, -1), (token) => {
+        accumulated += token;
+        setChatHistory(prev => {
+          const next = [...prev];
+          next[assistantIndex] = { role: "assistant", content: accumulated };
+          return next;
+        });
+      });
+      if (!accumulated.trim()) {
+        setChatHistory(prev => {
+          const next = [...prev];
+          next[assistantIndex] = { role: "assistant", content: "Mamma Mia! Chef Mario is speechless. Please try again!" };
+          return next;
+        });
+      }
+    } catch {
+      setChatHistory(prev => {
+        const next = [...prev];
+        next[assistantIndex] = { role: "assistant", content: "Mamma Mia! Chef Mario encountered a slight glitch. Please try asking again!" };
+        return next;
+      });
     } finally {
       setLoadingAsk(false);
     }
