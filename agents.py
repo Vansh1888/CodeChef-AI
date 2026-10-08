@@ -14,14 +14,14 @@ GROQ_KEY = os.getenv("GROQ_API_KEY")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
 llm_groq = ChatGroq(
-    model_name="llama-3.3-70b-versatile",
+    model_name=os.getenv("GROQ_CHAT_MODEL", "qwen/qwen3.8-27b"),
     groq_api_key=GROQ_KEY,
     temperature=0.6,
     max_retries=2
 ) if GROQ_KEY else None
 
 llm_gemini = ChatGoogleGenerativeAI(
-    model="gemini-3.8-flash",
+    model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
     google_api_key=GEMINI_KEY,
     temperature=0.6,
     max_retries=1

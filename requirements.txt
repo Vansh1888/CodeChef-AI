@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+python-dotenv
+google-genai
+groq
+pinecone
+pydantic
+langchain-groq
+langchain-google-genai
+langgraph
+python-multipart
