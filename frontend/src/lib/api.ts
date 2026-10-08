@@ -46,6 +46,51 @@ export async function askChef(prompt: string, history: ChatMessage[] = []): Prom
   return data.chef_response;
 }
 
+// 1B. Streaming Chat with Chef Mario (/ask-chef-stream - SSE)
+export async function askChefStream(
+  prompt: string,
+  history: ChatMessage[] = [],
+  onToken: (token: string) => void
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/ask-chef-stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, history }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to reach Chef Mario.");
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No stream available.");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data: ")) continue;
+      const payload = trimmed.slice(6);
+      if (payload === "[DONE]") return;
+      try {
+        const parsed = JSON.parse(payload);
+        if (parsed.token) onToken(parsed.token);
+      } catch {
+        // skip malformed chunks
+      }
+    }
+  }
+}
+
 // 2. Vision Scanner (/scan-fridge)
 export async function scanFridge(file: File): Promise<FridgeAnalysisResult> {
   const formData = new FormData();

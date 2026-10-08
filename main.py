@@ -4,8 +4,9 @@ import time
 import base64
 from typing import List
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
@@ -99,9 +100,8 @@ def askchef(request: AskChefRequest):
         groq_messages.append({"role": role, "content": msg.content})
     groq_messages.append({"role": "user", "content": prompt})
 
-    # CLEAN ASCII MODEL STRINGS (NO EN-DASHES)
-    m1 = "llama-3.3-70b-versatile"
-    m2 = "llama-3.1-8b-instant"
+    m1 = os.getenv("GROQ_CHAT_MODEL", "qwen/qwen3.8-27b")
+    m2 = os.getenv("GROQ_CHAT_MODEL", "qwen/qwen3.8-27b")
 
     if groq_client:
         for model_id in [m1, m2]:
@@ -125,7 +125,7 @@ def askchef(request: AskChefRequest):
     try:
         print("🔄 Chatting with Chef Mario via Gemini...")
         response = client.models.generate_content(
-            model="gemini-3.8-flash",
+            model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_persona,
@@ -184,6 +184,76 @@ def askchef(request: AskChefRequest):
     }
 
 
+# --- Endpoint 1B: Streaming Chat Assistant ---
+@app.post("/ask-chef-stream")
+async def askchef_stream(request: AskChefRequest):
+    prompt = request.prompt
+    if not prompt or not prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
+
+    system_persona = """You are Chef Mario, a charismatic, warm, and world-renowned Italian Master Chef! 🧑🏻‍🍳
+
+    GUIDELINES:
+    - Speak directly and conversationally to the user with warm Italian hospitality ("Ciao!", "Mamma Mia!", "Buon Appetito!").
+    - Remember previous context mentioned in the conversation history!
+    - Give clear, encouraging, expert culinary advice and end with a friendly follow-up question."""
+
+    groq_messages = [{"role": "system", "content": system_persona}]
+    for msg in request.history:
+        role = "assistant" if msg.role == "assistant" else "user"
+        groq_messages.append({"role": role, "content": msg.content})
+    groq_messages.append({"role": "user", "content": prompt})
+
+    async def event_stream():
+        streamed = False
+
+        if groq_client:
+            model_id = os.getenv("GROQ_CHAT_MODEL", "qwen/qwen3.8-27b")
+            try:
+                completion = groq_client.chat.completions.create(
+                    model=model_id,
+                    messages=groq_messages,
+                    temperature=0.8,
+                    max_tokens=600,
+                    stream=True
+                )
+                for chunk in completion:
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        streamed = True
+                        yield f"data: {json.dumps({'token': delta.content})}\n\n"
+                if streamed:
+                    yield "data: [DONE]\n\n"
+                    return
+            except Exception as e:
+                print(f"⚠️ Groq stream error: {e}")
+
+        try:
+            gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+            for chunk in client.models.generate_content_stream(
+                model=gemini_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_persona,
+                    temperature=0.8,
+                )
+            ):
+                if chunk.text:
+                    streamed = True
+                    yield f"data: {json.dumps({'token': chunk.text})}\n\n"
+            if streamed:
+                yield "data: [DONE]\n\n"
+                return
+        except Exception as e:
+            print(f"⚠️ Gemini stream error: {e}")
+
+        fallback = "Ciao my friend! 🧑🏻‍🍳 Mamma Mia, welcome to my kitchen! What fresh ingredients do you have today or what dish are you in the mood to cook?"
+        yield f"data: {json.dumps({'token': fallback})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 # --- Endpoint 2: Bulletproof Multi-Provider Vision Scanner ---
 @app.post("/scan-fridge", response_model=FridgeAnalysisResult)
 async def scan_fridge(file: UploadFile = File(...)): 
@@ -199,7 +269,7 @@ async def scan_fridge(file: UploadFile = File(...)):
                 print("🔄 Scanning image with Groq Vision...")
                 base64_image = base64.b64encode(image_bytes).decode('utf-8')
                 completion = groq_client.chat.completions.create(
-                    model="qwen/qwen3.8-27b",
+                    model=os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b"),
                     messages=[
                         {
                             "role": "user",
@@ -238,7 +308,7 @@ async def scan_fridge(file: UploadFile = File(...)):
             )
 
             response = client.models.generate_content(
-                model="gemini-3.8-flash",
+                model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
                 contents=[image_part, vision_prompt],
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
